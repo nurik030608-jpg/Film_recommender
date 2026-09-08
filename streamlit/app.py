@@ -5,6 +5,12 @@ This file never trains anything and never touches datasets/ — it only reads
 the exported model artifacts through the Recommender class.
 
 Run:  streamlit run streamlit/app.py   (from the repo root)
+
+Clickable-card technique: each movie tile is a real st.button (not an
+overlay), styled via the CSS class Streamlit auto-generates from a widget's
+`key` (`.st-key-<key>`). This needs a reasonably modern Streamlit version
+(the `st-key-*` class hook). requirements.txt pins an unpinned "streamlit"
+so Streamlit Cloud installs the latest release, which has it.
 """
 import hashlib
 import re
@@ -23,7 +29,8 @@ from model.recommender import Recommender  # noqa: E402
 st.set_page_config(page_title="CineMatch", page_icon="🎬", layout="wide")
 
 # ----------------------------------------------------------------------------
-# Netflix-style theme
+# Netflix-style theme (static, page-wide rules only — per-card rules are
+# injected next to each card since they depend on that card's unique key)
 # ----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -45,58 +52,51 @@ st.markdown("""
         color: #ffffff; font-size: 1.3rem; font-weight: 700;
         margin: 1.6rem 0 0.6rem 0.2rem;
     }
-
-    .cm-card {
-        border-radius: 6px;
-        padding: 14px 12px;
-        height: 168px;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        color: white;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-        transition: transform 0.15s ease;
-        overflow: hidden;
-        position: relative;
-    }
-    .cm-card:hover { transform: scale(1.035); }
-    .cm-card-title {
-        font-weight: 700; font-size: 0.92rem; line-height: 1.2rem;
-        text-shadow: 0 1px 4px rgba(0,0,0,0.7);
-        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-    .cm-card-genre {
-        font-size: 0.72rem; color: #e8e8e8; margin-top: 4px; opacity: 0.9;
-    }
-    .cm-badge {
-        position: absolute; top: 8px; right: 10px;
-        background: rgba(0,0,0,0.55); color: #46d369;
-        font-size: 0.72rem; font-weight: 700;
-        padding: 2px 7px; border-radius: 3px;
-    }
     .cm-empty { color: #808080; font-style: italic; padding: 1rem 0.2rem; }
-
-    .stButton>button {
-        background-color: #262626; color: #e8e8e8; border: 1px solid #404040;
-        font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; margin-top: 2px;
-        width: 100%;
-    }
-    .stButton>button:hover { background-color: #E50914; border-color: #E50914; color: #fff; }
 
     .cm-decade-title {
         color: #fff; font-weight: 700; font-size: 0.95rem; margin-bottom: 6px;
     }
-    .cm-mini-card {
-        border-radius: 4px; padding: 6px 8px; height: 78px; margin-bottom: 6px;
-        display: flex; align-items: flex-end; color: white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.4); overflow: hidden;
+
+    /* ---- Detail panel: slides in from the right, doesn't cover the page ---- */
+    .st-key-detail_panel {
+        position: fixed !important;
+        top: 0; right: 0;
+        width: 46%;
+        min-width: 380px;
+        max-width: 640px;
+        height: 100vh;
+        background: #181818 !important;
+        box-shadow: -10px 0 34px rgba(0,0,0,0.65);
+        z-index: 9999;
+        overflow-y: auto;
+        padding: 1.6rem 1.4rem 2rem 1.4rem !important;
+        animation: cm-slide-in 0.3s ease-out;
+        border-left: 1px solid #2a2a2a;
     }
-    .cm-mini-card-title {
-        font-weight: 700; font-size: 0.68rem; line-height: 0.85rem;
-        text-shadow: 0 1px 3px rgba(0,0,0,0.7);
-        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-        overflow: hidden;
+    @keyframes cm-slide-in {
+        from { transform: translateX(100%); opacity: 0.5; }
+        to   { transform: translateX(0);    opacity: 1;   }
+    }
+    div[class*="st-key-panel_movies_"] {
+        animation: cm-fade-in 0.22s ease;
+    }
+    @keyframes cm-fade-in {
+        from { opacity: 0; transform: translateY(5px); }
+        to   { opacity: 1; transform: translateY(0);   }
+    }
+    .st-key-panel_close button {
+        background: transparent !important; border: none !important;
+        color: #b3b3b3 !important; font-size: 1.1rem !important;
+        padding: 0 !important; width: auto !important;
+    }
+    .st-key-panel_close button:hover { color: #fff !important; }
+    .st-key-panel_prev button, .st-key-panel_next button {
+        background: #262626 !important; color: #fff !important;
+        border: 1px solid #404040 !important; border-radius: 4px !important;
+    }
+    .st-key-panel_prev button:hover, .st-key-panel_next button:hover {
+        background: #E50914 !important; border-color: #E50914 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -112,6 +112,9 @@ def load_model():
 rec = load_model()
 meta = rec.meta
 
+st.session_state.setdefault("panel_movie", None)
+st.session_state.setdefault("panel_offset", 0)
+
 # a fixed palette so the same movie always gets the same gradient
 PALETTE = [
     ("#E50914", "#831010"), ("#0071EB", "#003a75"), ("#7B2FF7", "#3d0f8f"),
@@ -123,6 +126,13 @@ PALETTE = [
 def card_gradient(title: str) -> tuple[str, str]:
     h = int(hashlib.md5(title.encode()).hexdigest(), 16)
     return PALETTE[h % len(PALETTE)]
+
+
+def make_key(*parts) -> str:
+    """CSS-class-safe, deterministic key for a widget (raw titles contain
+    spaces/quotes/unicode, which would break a `.st-key-<key>` CSS selector)."""
+    raw = "|".join(str(p) for p in parts)
+    return "c" + hashlib.md5(raw.encode()).hexdigest()[:14]
 
 
 @st.cache_data(show_spinner=False)
@@ -187,7 +197,65 @@ def browse_by_decade(_rec, n_per_decade: int = 6) -> dict:
     return out
 
 
-def render_row(row_title: str, df, score_col: str | None = None, clickable: bool = True):
+# ----------------------------------------------------------------------------
+# Clickable card: a real st.button, skinned via its own `.st-key-<key>` CSS
+# rule to look like a gradient tile. Clicking it opens/updates the side panel.
+# ----------------------------------------------------------------------------
+def render_card(movie, key: str, score_col: str | None = None,
+                 height: int = 168, compact: bool = False):
+    c1, c2 = card_gradient(movie["title"])
+    genres = movie.get("genres", "")
+    genres_display = genres.replace("|", " · ") if isinstance(genres, str) else ""
+
+    subtitle = genres_display
+    if score_col and score_col in movie:
+        pct = int(round(movie[score_col] * 100))
+        subtitle = f"{pct}% match · {genres_display}" if genres_display else f"{pct}% match"
+
+    if compact:
+        label = movie["title"]
+    else:
+        label = f"{movie['title']}  \n*{subtitle}*" if subtitle else movie["title"]
+
+    title_size = "0.68rem" if compact else "0.92rem"
+    padding = "6px 8px" if compact else "14px 12px"
+    radius = 4 if compact else 6
+    shadow = "0 2px 8px rgba(0,0,0,0.4)" if compact else "0 4px 14px rgba(0,0,0,0.5)"
+
+    st.markdown(f"""
+<style>
+.st-key-{key} button {{
+    background: linear-gradient(135deg, {c1}, {c2}) !important;
+    height: {height}px !important; width: 100% !important;
+    border: none !important; border-radius: {radius}px !important;
+    color: white !important; text-align: left !important;
+    display: flex !important; flex-direction: column !important;
+    align-items: flex-start !important; justify-content: flex-end !important;
+    padding: {padding} !important;
+    box-shadow: {shadow} !important;
+    transition: transform 0.15s ease !important;
+    white-space: normal !important; cursor: pointer !important;
+}}
+.st-key-{key} button:hover {{ transform: scale(1.035) !important; }}
+.st-key-{key} button p {{
+    margin: 0 !important; font-weight: 700 !important;
+    font-size: {title_size} !important; line-height: 1.22 !important;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.7) !important;
+}}
+.st-key-{key} button p em {{
+    display: block !important; font-style: normal !important;
+    font-size: 0.72rem !important; font-weight: 400 !important;
+    opacity: 0.9 !important; margin-top: 3px !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+
+    if st.button(label, key=key, use_container_width=True):
+        st.session_state["panel_movie"] = movie["title"]
+        st.session_state["panel_offset"] = 0
+
+
+def render_row(row_title: str, df, score_col: str | None = None):
     st.markdown(f'<div class="cm-row-title">{row_title}</div>', unsafe_allow_html=True)
     if df is None or len(df) == 0:
         st.markdown('<div class="cm-empty">Nothing here yet — try a different selection.</div>',
@@ -196,28 +264,59 @@ def render_row(row_title: str, df, score_col: str | None = None, clickable: bool
     cols = st.columns(min(len(df), 6))
     for i, (_, movie) in enumerate(df.iterrows()):
         with cols[i % len(cols)]:
-            c1, c2 = card_gradient(movie["title"])
-            badge = ""
-            if score_col and score_col in movie:
-                badge = f'<div class="cm-badge">{int(round(movie[score_col] * 100))}% match</div>'
-            genres = movie.get("genres", "")
-            genres_display = genres.replace("|", " · ") if isinstance(genres, str) else ""
-            # NOTE: built as a single line on purpose. When `badge` is empty, a
-            # multi-line f-string leaves a blank line inside the HTML block,
-            # which makes Streamlit's markdown parser close the raw-HTML block
-            # early and print the remaining tags as literal text. Keeping it
-            # on one line avoids that blank-line-closes-html-block bug.
-            card_html = (
-                f'<div class="cm-card" style="background: linear-gradient(135deg, {c1}, {c2});">'
-                f'{badge}'
-                f'<div class="cm-card-title">{movie["title"]}</div>'
-                f'<div class="cm-card-genre">{genres_display}</div>'
-                f'</div>'
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
-            if clickable:
-                if st.button("More like this ▸", key=f"more_{row_title}_{i}"):
-                    st.session_state["similar_select"] = movie["title"]
+            render_card(movie, key=make_key("row", row_title, i, movie["title"]),
+                        score_col=score_col)
+
+
+# ----------------------------------------------------------------------------
+# Detail panel — slides in from the right (1/4 info + 3/4 similar titles)
+# when a card is clicked. Clicking a movie inside the panel swaps the panel
+# to that movie (reuses render_card's own click handler — same mechanism,
+# so there's no separate/inconsistent click path to go stale or misbehave).
+# ----------------------------------------------------------------------------
+def render_panel():
+    movie_title = st.session_state.get("panel_movie")
+    if not movie_title or movie_title not in rec.title_to_pos:
+        return
+
+    with st.container(key="detail_panel"):
+        close_col, _spacer = st.columns([1, 9])
+        with close_col:
+            if st.button("✕", key="panel_close"):
+                st.session_state["panel_movie"] = None
+
+        info_col, movies_col = st.columns([1, 3])
+
+        row = rec.movies.iloc[rec.title_to_pos[movie_title]]
+        with info_col:
+            st.markdown(f"#### {row['title']}")
+            genres_list = row["genres"].split("|") if isinstance(row["genres"], str) else []
+            for g in genres_list:
+                st.markdown(f"- {g}")
+
+        with movies_col:
+            st.markdown("**Similar titles**")
+            sims = rec.similar_movies(movie_title, n=30)
+            total = len(sims)
+            offset = min(st.session_state.get("panel_offset", 0), max(0, total - 3))
+            page = sims.iloc[offset: offset + 3]
+
+            with st.container(key=f"panel_movies_{offset}"):
+                mcols = st.columns(3)
+                for i, (_, m) in enumerate(page.iterrows()):
+                    with mcols[i]:
+                        render_card(m, key=make_key("panel", movie_title, offset, m["title"]),
+                                    score_col="similarity", height=130, compact=False)
+
+            nav_l, nav_r = st.columns(2)
+            with nav_l:
+                if offset > 0:
+                    if st.button("◀ Back", key="panel_prev", use_container_width=True):
+                        st.session_state["panel_offset"] = max(0, offset - 3)
+            with nav_r:
+                if offset + 3 < total:
+                    if st.button("Next ▶", key="panel_next", use_container_width=True):
+                        st.session_state["panel_offset"] = offset + 3
 
 
 # ----------------------------------------------------------------------------
@@ -232,6 +331,8 @@ st.markdown(f"""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+render_panel()
 
 # ----------------------------------------------------------------------------
 # "Who's watching" — profile picker (existing user vs. new user)
@@ -287,23 +388,6 @@ genre_n = st.sidebar.slider("How many to show", 6, 24, 12, 6, key="genre_n")
 st.divider()
 
 # ----------------------------------------------------------------------------
-# Search / explore: similar movies by title
-# ----------------------------------------------------------------------------
-if "similar_select" not in st.session_state:
-    default_title = "Toy Story (1995)" if "Toy Story (1995)" in rec.title_to_pos \
-        else rec.movies["title"].iloc[0]
-    st.session_state["similar_select"] = default_title
-
-st.markdown('<div class="cm-row-title">🔍 Find Similar Movies by Title</div>', unsafe_allow_html=True)
-search_title = st.selectbox("Find movies similar to…", rec.movies["title"].tolist(),
-                             key="similar_select")
-n_sim = st.slider("How many similar titles", 6, 24, 12, 6, key="nsim")
-render_row(f"Similar to \u201c{search_title}\u201d", rec.similar_movies(search_title, n_sim),
-           score_col="similarity")
-
-st.divider()
-
-# ----------------------------------------------------------------------------
 # Browse by Genre (sidebar multiselect feeds this row)
 # ----------------------------------------------------------------------------
 if selected_genres:
@@ -328,14 +412,9 @@ for col, (label, df) in zip(decade_cols, decade_data.items()):
         if df is None or len(df) == 0:
             st.markdown('<div class="cm-empty">—</div>', unsafe_allow_html=True)
             continue
-        for _, movie in df.iterrows():
-            c1, c2 = card_gradient(movie["title"])
-            mini_html = (
-                f'<div class="cm-mini-card" style="background: linear-gradient(135deg, {c1}, {c2});">'
-                f'<div class="cm-mini-card-title">{movie["title"]}</div>'
-                f'</div>'
-            )
-            st.markdown(mini_html, unsafe_allow_html=True)
+        for j, (_, movie) in enumerate(df.iterrows()):
+            render_card(movie, key=make_key("decade", label, j, movie["title"]),
+                        height=78, compact=True)
 
 st.divider()
 st.caption(
