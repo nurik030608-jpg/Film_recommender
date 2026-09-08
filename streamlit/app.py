@@ -98,6 +98,24 @@ st.markdown("""
     .st-key-panel_prev button:hover, .st-key-panel_next button:hover {
         background: #E50914 !important; border-color: #E50914 !important;
     }
+
+    .cm-panel-hero {
+        border-radius: 8px; padding: 26px 18px; margin: 0.4rem 0 1rem 0;
+        min-height: 90px; display: flex; align-items: flex-end;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+    }
+    .cm-panel-hero-title {
+        color: #fff; font-size: 1.35rem; font-weight: 800; line-height: 1.3;
+        text-shadow: 0 2px 6px rgba(0,0,0,0.7);
+    }
+    .cm-panel-meta { color: #b3b3b3; font-size: 0.85rem; margin-bottom: 10px; }
+    .cm-genre-chips { margin-bottom: 0.4rem; }
+    .cm-genre-chip {
+        display: inline-block; background: #262626; color: #e8e8e8;
+        font-size: 0.72rem; padding: 3px 10px; border-radius: 12px;
+        margin: 0 6px 6px 0; border: 1px solid #3a3a3a;
+    }
+    .cm-panel-divider { border-top: 1px solid #2a2a2a; margin: 0.8rem 0 1rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -253,6 +271,7 @@ def render_card(movie, key: str, score_col: str | None = None,
     if st.button(label, key=key, use_container_width=True):
         st.session_state["panel_movie"] = movie["title"]
         st.session_state["panel_offset"] = 0
+        st.rerun()
 
 
 def render_row(row_title: str, df, score_col: str | None = None):
@@ -274,49 +293,78 @@ def render_row(row_title: str, df, score_col: str | None = None):
 # to that movie (reuses render_card's own click handler — same mechanism,
 # so there's no separate/inconsistent click path to go stale or misbehave).
 # ----------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def average_rating(_rec, movie_id: int):
+    r = _rec.ratings.loc[_rec.ratings["movieId"] == movie_id, "rating"]
+    return float(r.mean()) if len(r) else None
+
+
 def render_panel():
     movie_title = st.session_state.get("panel_movie")
     if not movie_title or movie_title not in rec.title_to_pos:
         return
+
+    row = rec.movies.iloc[rec.title_to_pos[movie_title]]
+    c1, c2 = card_gradient(movie_title)
+    year = parse_year(movie_title)
+    genres_list = row["genres"].split("|") if isinstance(row["genres"], str) else []
+    movie_id = int(row["movieId"])
+    avg_rating = average_rating(rec, movie_id)
+    n_ratings = int(rec.num_ratings[rec.item_pos[movie_id]]) if movie_id in rec.item_pos else 0
 
     with st.container(key="detail_panel"):
         close_col, _spacer = st.columns([1, 9])
         with close_col:
             if st.button("✕", key="panel_close"):
                 st.session_state["panel_movie"] = None
+                st.rerun()
 
-        info_col, movies_col = st.columns([1, 3])
+        # ---- Section 1: colored header strip with the movie title ----
+        st.markdown(f"""
+<div class="cm-panel-hero" style="background: linear-gradient(135deg, {c1}, {c2});">
+    <div class="cm-panel-hero-title">{row['title']}</div>
+</div>
+""", unsafe_allow_html=True)
 
-        row = rec.movies.iloc[rec.title_to_pos[movie_title]]
-        with info_col:
-            st.markdown(f"#### {row['title']}")
-            genres_list = row["genres"].split("|") if isinstance(row["genres"], str) else []
-            for g in genres_list:
-                st.markdown(f"- {g}")
+        # ---- Section 2: compact meta — year, rating, genre chips ----
+        meta_bits = []
+        if year:
+            meta_bits.append(f"📅 {year}")
+        if avg_rating is not None:
+            meta_bits.append(f"⭐ {avg_rating:.1f}/5")
+        meta_bits.append(f"👥 {n_ratings:,} ratings")
+        st.markdown(f'<div class="cm-panel-meta">{" &nbsp;·&nbsp; ".join(meta_bits)}</div>',
+                    unsafe_allow_html=True)
+        if genres_list:
+            chips = "".join(f'<span class="cm-genre-chip">{g}</span>' for g in genres_list)
+            st.markdown(f'<div class="cm-genre-chips">{chips}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cm-panel-divider"></div>', unsafe_allow_html=True)
 
-        with movies_col:
-            st.markdown("**Similar titles**")
-            sims = rec.similar_movies(movie_title, n=30)
-            total = len(sims)
-            offset = min(st.session_state.get("panel_offset", 0), max(0, total - 3))
-            page = sims.iloc[offset: offset + 3]
+        # ---- Section 3: similar titles + pagination ----
+        st.markdown("**Similar titles**")
+        sims = rec.similar_movies(movie_title, n=30)
+        total = len(sims)
+        offset = min(st.session_state.get("panel_offset", 0), max(0, total - 3))
+        page = sims.iloc[offset: offset + 3]
 
-            with st.container(key=f"panel_movies_{offset}"):
-                mcols = st.columns(3)
-                for i, (_, m) in enumerate(page.iterrows()):
-                    with mcols[i]:
-                        render_card(m, key=make_key("panel", movie_title, offset, m["title"]),
-                                    score_col="similarity", height=130, compact=False)
+        with st.container(key=f"panel_movies_{offset}"):
+            mcols = st.columns(3)
+            for i, (_, m) in enumerate(page.iterrows()):
+                with mcols[i]:
+                    render_card(m, key=make_key("panel", movie_title, offset, m["title"]),
+                                score_col="similarity", height=130)
 
-            nav_l, nav_r = st.columns(2)
-            with nav_l:
-                if offset > 0:
-                    if st.button("◀ Back", key="panel_prev", use_container_width=True):
-                        st.session_state["panel_offset"] = max(0, offset - 3)
-            with nav_r:
-                if offset + 3 < total:
-                    if st.button("Next ▶", key="panel_next", use_container_width=True):
-                        st.session_state["panel_offset"] = offset + 3
+        nav_l, nav_r = st.columns(2)
+        with nav_l:
+            if offset > 0:
+                if st.button("◀ Back", key="panel_prev", use_container_width=True):
+                    st.session_state["panel_offset"] = max(0, offset - 3)
+                    st.rerun()
+        with nav_r:
+            if offset + 3 < total:
+                if st.button("Next ▶", key="panel_next", use_container_width=True):
+                    st.session_state["panel_offset"] = min(max(0, total - 3), offset + 3)
+                    st.rerun()
 
 
 # ----------------------------------------------------------------------------
