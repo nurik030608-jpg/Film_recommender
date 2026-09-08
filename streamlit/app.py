@@ -103,8 +103,9 @@ st.markdown("""
     }
 
     .cm-panel-hero {
-        border-radius: 8px; padding: 26px 18px; margin: 0.4rem 0 1rem 0;
-        min-height: 90px; display: flex; align-items: flex-end;
+        border-radius: 0 0 8px 8px; padding: 26px 18px;
+        margin: -1.6rem -1.4rem 1.2rem -1.4rem;
+        min-height: 200px; display: flex; align-items: flex-end;
         box-shadow: 0 4px 14px rgba(0,0,0,0.5);
     }
     .cm-panel-hero-title {
@@ -364,12 +365,11 @@ def render_panel():
                     st.session_state["panel_offset"] = min(max(0, total - 3), offset + 3)
                     st.rerun()
 
-        st.markdown('<div style="height: 1.5rem;"></div>', unsafe_allow_html=True)
-        collapse_l, collapse_mid, collapse_r = st.columns([2, 1, 2])
-        with collapse_mid:
-            if st.button("»", key="panel_collapse", use_container_width=True):
-                st.session_state["panel_movie"] = None
-                st.rerun()
+        st.markdown('<div class="cm-collapse-wrap">', unsafe_allow_html=True)
+        if st.button("»", key="panel_collapse"):
+            st.session_state["panel_movie"] = None
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------------
