@@ -7,9 +7,11 @@ the exported model artifacts through the Recommender class.
 Run:  streamlit run streamlit/app.py   (from the repo root)
 """
 import hashlib
+import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import streamlit as st
 
 # --- make `model/` importable regardless of where streamlit is launched from ---
@@ -26,7 +28,7 @@ st.set_page_config(page_title="CineMatch", page_icon="🎬", layout="wide")
 st.markdown("""
 <style>
     .stApp { background-color: #141414; }
-    #MainMenu, footer, header { visibility: hidden; }
+    #MainMenu, footer { visibility: hidden; }
 
     .cm-hero {
         padding: 2.2rem 1rem 1.2rem 1rem;
@@ -74,6 +76,28 @@ st.markdown("""
         padding: 2px 7px; border-radius: 3px;
     }
     .cm-empty { color: #808080; font-style: italic; padding: 1rem 0.2rem; }
+
+    .stButton>button {
+        background-color: #262626; color: #e8e8e8; border: 1px solid #404040;
+        font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; margin-top: 2px;
+        width: 100%;
+    }
+    .stButton>button:hover { background-color: #E50914; border-color: #E50914; color: #fff; }
+
+    .cm-decade-title {
+        color: #fff; font-weight: 700; font-size: 0.95rem; margin-bottom: 6px;
+    }
+    .cm-mini-card {
+        border-radius: 4px; padding: 6px 8px; height: 78px; margin-bottom: 6px;
+        display: flex; align-items: flex-end; color: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4); overflow: hidden;
+    }
+    .cm-mini-card-title {
+        font-weight: 700; font-size: 0.68rem; line-height: 0.85rem;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,7 +125,69 @@ def card_gradient(title: str) -> tuple[str, str]:
     return PALETTE[h % len(PALETTE)]
 
 
-def render_row(row_title: str, df, score_col: str | None = None):
+@st.cache_data(show_spinner=False)
+def all_genres(_rec) -> list[str]:
+    genre_set = set()
+    for g in _rec.movies["genres"].dropna():
+        genre_set.update(g.split("|"))
+    return sorted(x for x in genre_set if x and x != "(no genres listed)")
+
+
+def browse_by_genre(rec, selected_genres: list[str], n: int = 12):
+    """Movies matching ANY of the selected genres, ranked by popularity."""
+    if not selected_genres:
+        return None
+    mask = rec.movies["genres"].apply(
+        lambda g: isinstance(g, str) and any(genre in g.split("|") for genre in selected_genres)
+    )
+    idx = np.where(mask.to_numpy())[0]
+    if len(idx) == 0:
+        return rec.movies.iloc[[]]
+    order = idx[np.argsort(-rec.num_ratings[idx])][:n]
+    out = rec.movies.iloc[order][["movieId", "title", "genres"]].reset_index(drop=True)
+    out["num_ratings"] = rec.num_ratings[order]
+    return out
+
+
+YEAR_RE = re.compile(r"\((\d{4})\)\s*$")
+
+DECADE_BUCKETS = [
+    ("Before 1980", None, 1979),
+    ("1980s", 1980, 1989),
+    ("1990s", 1990, 1999),
+    ("2000s", 2000, 2009),
+    ("2010s", 2010, 2019),
+    ("2020s+", 2020, None),
+]
+
+
+def parse_year(title: str):
+    m = YEAR_RE.search(title)
+    return int(m.group(1)) if m else None
+
+
+@st.cache_data(show_spinner=False)
+def browse_by_decade(_rec, n_per_decade: int = 6) -> dict:
+    years = _rec.movies["title"].apply(parse_year)
+    out = {}
+    for label, lo, hi in DECADE_BUCKETS:
+        mask = years.notna()
+        if lo is not None:
+            mask &= years >= lo
+        if hi is not None:
+            mask &= years <= hi
+        idx = np.where(mask.to_numpy())[0]
+        if len(idx) == 0:
+            out[label] = None
+            continue
+        order = idx[np.argsort(-_rec.num_ratings[idx])][:n_per_decade]
+        df = _rec.movies.iloc[order][["movieId", "title", "genres"]].reset_index(drop=True)
+        df["num_ratings"] = _rec.num_ratings[order]
+        out[label] = df
+    return out
+
+
+def render_row(row_title: str, df, score_col: str | None = None, clickable: bool = True):
     st.markdown(f'<div class="cm-row-title">{row_title}</div>', unsafe_allow_html=True)
     if df is None or len(df) == 0:
         st.markdown('<div class="cm-empty">Nothing here yet — try a different selection.</div>',
@@ -129,6 +215,9 @@ def render_row(row_title: str, df, score_col: str | None = None):
                 f'</div>'
             )
             st.markdown(card_html, unsafe_allow_html=True)
+            if clickable:
+                if st.button("More like this ▸", key=f"more_{row_title}_{i}"):
+                    st.session_state["similar_select"] = movie["title"]
 
 
 # ----------------------------------------------------------------------------
@@ -190,16 +279,63 @@ else:
         st.markdown('<div class="cm-empty">Pick at least one movie on the left '
                     'to get personalized recommendations.</div>', unsafe_allow_html=True)
 
+st.sidebar.divider()
+st.sidebar.markdown("**Browse by Genre**")
+selected_genres = st.sidebar.multiselect("Genres", all_genres(rec))
+genre_n = st.sidebar.slider("How many to show", 6, 24, 12, 6, key="genre_n")
+
 st.divider()
 
 # ----------------------------------------------------------------------------
 # Search / explore: similar movies by title
 # ----------------------------------------------------------------------------
+if "similar_select" not in st.session_state:
+    default_title = "Toy Story (1995)" if "Toy Story (1995)" in rec.title_to_pos \
+        else rec.movies["title"].iloc[0]
+    st.session_state["similar_select"] = default_title
+
 st.markdown('<div class="cm-row-title">🔍 Find Similar Movies by Title</div>', unsafe_allow_html=True)
 search_title = st.selectbox("Find movies similar to…", rec.movies["title"].tolist(),
-                             index=int(rec.title_to_pos.get("Toy Story (1995)", 0)))
+                             key="similar_select")
 n_sim = st.slider("How many similar titles", 6, 24, 12, 6, key="nsim")
-render_row(f"Similar to \u201c{search_title}\u201d", rec.similar_movies(search_title, n_sim), score_col="similarity")
+render_row(f"Similar to \u201c{search_title}\u201d", rec.similar_movies(search_title, n_sim),
+           score_col="similarity")
+
+st.divider()
+
+# ----------------------------------------------------------------------------
+# Browse by Genre (sidebar multiselect feeds this row)
+# ----------------------------------------------------------------------------
+if selected_genres:
+    render_row(f"Genres: {', '.join(selected_genres)}",
+               browse_by_genre(rec, selected_genres, genre_n))
+else:
+    st.markdown('<div class="cm-row-title">🎭 Browse by Genre</div>', unsafe_allow_html=True)
+    st.markdown('<div class="cm-empty">Pick one or more genres in the sidebar to browse titles.'
+                '</div>', unsafe_allow_html=True)
+
+st.divider()
+
+# ----------------------------------------------------------------------------
+# Browse by Decade — 6 columns, one per decade bucket
+# ----------------------------------------------------------------------------
+st.markdown('<div class="cm-row-title">📅 Browse by Decade</div>', unsafe_allow_html=True)
+decade_data = browse_by_decade(rec, 6)
+decade_cols = st.columns(6)
+for col, (label, df) in zip(decade_cols, decade_data.items()):
+    with col:
+        st.markdown(f'<div class="cm-decade-title">{label}</div>', unsafe_allow_html=True)
+        if df is None or len(df) == 0:
+            st.markdown('<div class="cm-empty">—</div>', unsafe_allow_html=True)
+            continue
+        for _, movie in df.iterrows():
+            c1, c2 = card_gradient(movie["title"])
+            mini_html = (
+                f'<div class="cm-mini-card" style="background: linear-gradient(135deg, {c1}, {c2});">'
+                f'<div class="cm-mini-card-title">{movie["title"]}</div>'
+                f'</div>'
+            )
+            st.markdown(mini_html, unsafe_allow_html=True)
 
 st.divider()
 st.caption(
