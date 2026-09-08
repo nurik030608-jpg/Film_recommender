@@ -85,12 +85,19 @@ st.markdown("""
         from { opacity: 0; transform: translateY(5px); }
         to   { opacity: 1; transform: translateY(0);   }
     }
-    .st-key-panel_close button {
-        background: transparent !important; border: none !important;
-        color: #b3b3b3 !important; font-size: 1.1rem !important;
-        padding: 0 !important; width: auto !important;
+    .st-key-panel_close {
+        position: absolute !important; top: 14px !important; left: 14px !important;
+        z-index: 10000 !important; width: auto !important;
     }
-    .st-key-panel_close button:hover { color: #fff !important; }
+    .st-key-panel_close button {
+        background: rgba(255,255,255,0.08) !important; border: none !important;
+        color: #e8e8e8 !important; font-size: 1.25rem !important; font-weight: 700 !important;
+        padding: 0 !important; width: 34px !important; height: 34px !important;
+        border-radius: 50% !important; line-height: 1 !important;
+    }
+    .st-key-panel_close button:hover {
+        background: #E50914 !important; color: #fff !important;
+    }
     .st-key-panel_prev button, .st-key-panel_next button {
         background: #262626 !important; color: #fff !important;
         border: 1px solid #404040 !important; border-radius: 4px !important;
@@ -100,7 +107,7 @@ st.markdown("""
     }
 
     .cm-panel-hero {
-        border-radius: 8px; padding: 26px 18px; margin: 0.4rem 0 1rem 0;
+        border-radius: 8px; padding: 26px 18px; margin: 2.2rem 0 1rem 0;
         min-height: 90px; display: flex; align-items: flex-end;
         box-shadow: 0 4px 14px rgba(0,0,0,0.5);
     }
@@ -313,11 +320,9 @@ def render_panel():
     n_ratings = int(rec.num_ratings[rec.item_pos[movie_id]]) if movie_id in rec.item_pos else 0
 
     with st.container(key="detail_panel"):
-        close_col, _spacer = st.columns([1, 9])
-        with close_col:
-            if st.button("✕", key="panel_close"):
-                st.session_state["panel_movie"] = None
-                st.rerun()
+        if st.button("✕", key="panel_close"):
+            st.session_state["panel_movie"] = None
+            st.rerun()
 
         # ---- Section 1: colored header strip with the movie title ----
         st.markdown(f"""
