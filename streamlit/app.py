@@ -104,7 +104,7 @@ def card_gradient(title: str) -> tuple[str, str]:
 def render_row(row_title: str, df, score_col: str | None = None):
     st.markdown(f'<div class="cm-row-title">{row_title}</div>', unsafe_allow_html=True)
     if df is None or len(df) == 0:
-        st.markdown('<div class="cm-empty">Пока пусто — попробуйте другой выбор.</div>',
+        st.markdown('<div class="cm-empty">Nothing here yet — try a different selection.</div>',
                     unsafe_allow_html=True)
         return
     cols = st.columns(min(len(df), 6))
@@ -116,13 +116,19 @@ def render_row(row_title: str, df, score_col: str | None = None):
                 badge = f'<div class="cm-badge">{int(round(movie[score_col] * 100))}% match</div>'
             genres = movie.get("genres", "")
             genres_display = genres.replace("|", " · ") if isinstance(genres, str) else ""
-            st.markdown(f"""
-                <div class="cm-card" style="background: linear-gradient(135deg, {c1}, {c2});">
-                    {badge}
-                    <div class="cm-card-title">{movie['title']}</div>
-                    <div class="cm-card-genre">{genres_display}</div>
-                </div>
-            """, unsafe_allow_html=True)
+            # NOTE: built as a single line on purpose. When `badge` is empty, a
+            # multi-line f-string leaves a blank line inside the HTML block,
+            # which makes Streamlit's markdown parser close the raw-HTML block
+            # early and print the remaining tags as literal text. Keeping it
+            # on one line avoids that blank-line-closes-html-block bug.
+            card_html = (
+                f'<div class="cm-card" style="background: linear-gradient(135deg, {c1}, {c2});">'
+                f'{badge}'
+                f'<div class="cm-card-title">{movie["title"]}</div>'
+                f'<div class="cm-card-genre">{genres_display}</div>'
+                f'</div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------------
@@ -141,26 +147,26 @@ st.markdown(f"""
 # ----------------------------------------------------------------------------
 # "Who's watching" — profile picker (existing user vs. new user)
 # ----------------------------------------------------------------------------
-mode = st.sidebar.radio("Кто смотрит?", ["Существующий пользователь", "Новый пользователь"])
+mode = st.sidebar.radio("Who's watching?", ["Existing user", "New user"])
 st.sidebar.divider()
 
-if mode == "Существующий пользователь":
+if mode == "Existing user":
     users, counts = rec.users_by_activity()
     idx = st.sidebar.selectbox(
-        "Профиль",
+        "Profile",
         range(len(users)),
         index=len(users) // 2,
-        format_func=lambda i: f"User {users[i]}  ·  {counts[i]} оценок",
+        format_func=lambda i: f"User {users[i]}  ·  {counts[i]} ratings",
     )
     user_id = int(users[idx])
     alpha = st.sidebar.slider(
-        "Баланс: жанры ↔ похожие вкусы", 0.0, 1.0, float(meta["best_alpha"]), 0.05,
-        help="0 = только по жанрам, 1 = только по похожим пользователям",
+        "Balance: genres ↔ similar tastes", 0.0, 1.0, float(meta["best_alpha"]), 0.05,
+        help="0 = genres only, 1 = collaborative filtering only",
     )
-    top_n = st.sidebar.slider("Сколько показывать", 6, 24, 12, 6)
+    top_n = st.sidebar.slider("How many to show", 6, 24, 12, 6)
 
     history = rec.user_history(user_id, 6)
-    render_row("Ваша история (топ оценённых)", history)
+    render_row("Your History (Top Rated)", history)
     render_row("Top Picks For You", rec.recommend(user_id, alpha=alpha, n=top_n), score_col="hybrid")
     render_row("Trending Now", rec.popular(top_n))
 
@@ -169,31 +175,31 @@ if mode == "Существующий пользователь":
         render_row(f"Because you watched: {seed_title}", rec.similar_movies(seed_title, top_n))
 
 else:
-    st.sidebar.markdown("Выберите пару фильмов, которые вам нравятся — мы построим ваш вкус на лету.")
+    st.sidebar.markdown("Pick a few movies you like — we'll build your taste profile on the fly.")
     all_titles = rec.movies["title"].tolist()
-    liked_titles = st.sidebar.multiselect("Понравившиеся фильмы", all_titles)
-    top_n = st.sidebar.slider("Сколько показывать", 6, 24, 12, 6)
+    liked_titles = st.sidebar.multiselect("Movies you liked", all_titles)
+    top_n = st.sidebar.slider("How many to show", 6, 24, 12, 6)
 
     render_row("Trending Now", rec.popular(top_n))
 
     if liked_titles:
         liked_ids = [int(rec.movies["movieId"].iloc[rec.title_to_pos[t]]) for t in liked_titles]
-        render_row("Recommended For You (по жанрам)",
+        render_row("Recommended For You (by genre)",
                    rec.recommend_for_new_user(liked_ids, top_n), score_col="content")
     else:
-        st.markdown('<div class="cm-empty">Выберите хотя бы один фильм слева, '
-                    'чтобы получить персональные рекомендации.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cm-empty">Pick at least one movie on the left '
+                    'to get personalized recommendations.</div>', unsafe_allow_html=True)
 
 st.divider()
 
 # ----------------------------------------------------------------------------
 # Search / explore: similar movies by title
 # ----------------------------------------------------------------------------
-st.markdown('<div class="cm-row-title">🔍 Похожие фильмы по названию</div>', unsafe_allow_html=True)
-search_title = st.selectbox("Найти похожие на…", rec.movies["title"].tolist(),
+st.markdown('<div class="cm-row-title">🔍 Find Similar Movies by Title</div>', unsafe_allow_html=True)
+search_title = st.selectbox("Find movies similar to…", rec.movies["title"].tolist(),
                              index=int(rec.title_to_pos.get("Toy Story (1995)", 0)))
-n_sim = st.slider("Сколько похожих", 6, 24, 12, 6, key="nsim")
-render_row(f"Похоже на «{search_title}»", rec.similar_movies(search_title, n_sim), score_col="similarity")
+n_sim = st.slider("How many similar titles", 6, 24, 12, 6, key="nsim")
+render_row(f"Similar to \u201c{search_title}\u201d", rec.similar_movies(search_title, n_sim), score_col="similarity")
 
 st.divider()
 st.caption(
