@@ -180,7 +180,7 @@ def browse_by_genre(rec, selected_genres: list[str], n: int = 12):
     if len(idx) == 0:
         return rec.movies.iloc[[]]
     order = idx[np.argsort(-rec.num_ratings[idx])][:n]
-    out = rec.movies.iloc[order][["movieId", "title", "genres"]].reset_index(drop=True)
+    out = rec.movies.iloc[order][["movieId", "title", "genres", "poster_url", "overview"]].reset_index(drop=True)
     out["num_ratings"] = rec.num_ratings[order]
     return out
 
@@ -217,7 +217,7 @@ def browse_by_decade(_rec, n_per_decade: int = 6) -> dict:
             out[label] = None
             continue
         order = idx[np.argsort(-_rec.num_ratings[idx])][:n_per_decade]
-        df = _rec.movies.iloc[order][["movieId", "title", "genres"]].reset_index(drop=True)
+        df = _rec.movies.iloc[order][["movieId", "title", "genres", "poster_url", "overview"]].reset_index(drop=True)
         df["num_ratings"] = _rec.num_ratings[order]
         out[label] = df
     return out
