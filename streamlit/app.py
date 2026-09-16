@@ -124,6 +124,28 @@ st.markdown("""
         margin: 0 6px 6px 0; border: 1px solid #3a3a3a;
     }
     .cm-panel-divider { border-top: 1px solid #2a2a2a; margin: 0.8rem 0 1rem 0; }
+
+    /* ---- Search bar: compact, rounded, dims the page + grows slightly on focus ---- */
+    .st-key-search_wrap {
+        max-width: 480px; margin: 0 auto 1.4rem auto; position: relative; z-index: 10001;
+    }
+    .st-key-search_wrap:focus-within::before {
+        content: ""; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+        z-index: -1; animation: cm-fade-in 0.2s ease;
+    }
+    .st-key-search_wrap input {
+        border-radius: 22px !important; background: #262626 !important;
+        border: 1px solid #404040 !important; color: #fff !important;
+        padding: 9px 18px !important; font-size: 0.88rem !important;
+        transition: transform 0.18s ease, box-shadow 0.18s ease,
+                    background 0.18s ease, border-color 0.18s ease !important;
+    }
+    .st-key-search_wrap input:focus {
+        transform: scale(1.035) !important; background: #303030 !important;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.55) !important;
+        outline: none !important; border-color: #E50914 !important;
+    }
+    .st-key-search_wrap input::placeholder { color: #888 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -419,6 +441,31 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 render_panel()
+
+# ----------------------------------------------------------------------------
+# Search — compact pill input; typing filters titles and shows a results row
+# ----------------------------------------------------------------------------
+with st.container(key="search_wrap"):
+    query = st.text_input(
+        "Search",
+        placeholder="🔍  Search movies by title…",
+        label_visibility="collapsed",
+        key="search_query",
+    )
+
+if query and query.strip():
+    q = query.strip().lower()
+    mask = rec.movies["title"].str.lower().str.contains(q, regex=False, na=False)
+    idx = np.where(mask.to_numpy())[0]
+    if len(idx) > 0:
+        order = idx[np.argsort(-rec.num_ratings[idx])][:12]
+        results = rec.movies.iloc[order][
+            ["movieId", "title", "genres", "poster_url", "overview"]
+        ].reset_index(drop=True)
+        render_row(f'Results for "{query}"', results)
+    else:
+        st.markdown('<div class="cm-empty">No movies found.</div>', unsafe_allow_html=True)
+    st.divider()
 
 # ----------------------------------------------------------------------------
 # "Who's watching" — profile picker (existing user vs. new user)
