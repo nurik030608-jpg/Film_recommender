@@ -28,6 +28,17 @@ class Recommender:
         self.movies = pd.read_parquet(d / "movies.parquet")
         self.ratings = pd.read_parquet(d / "ratings.parquet")
 
+        # Optional: TMDB poster/overview enrichment (model/enrich_posters.py).
+        # Missing file is fine — poster_url/overview just stay all-null and
+        # the frontend falls back to its gradient tiles.
+        posters_path = d / "posters.parquet"
+        if posters_path.exists():
+            posters = pd.read_parquet(posters_path)[["movieId", "poster_url", "overview"]]
+            self.movies = self.movies.merge(posters, on="movieId", how="left")
+        else:
+            self.movies["poster_url"] = None
+            self.movies["overview"] = None
+
         self.user_pos = {int(u): k for k, u in enumerate(self.user_ids)}
         self.item_pos = {int(m): k for k, m in enumerate(self.item_ids)}
         self.title_to_pos = {t: k for k, t in enumerate(self.movies["title"])}
@@ -48,7 +59,7 @@ class Recommender:
         return (x - lo) / (hi - lo) if hi > lo else np.zeros_like(x, dtype=float)
 
     def _frame(self, order, cols):
-        out = self.movies.iloc[order][["movieId", "title", "genres"]].reset_index(drop=True)
+        out = self.movies.iloc[order][["movieId", "title", "genres", "poster_url", "overview"]].reset_index(drop=True)
         for name, values in cols.items():
             out[name] = np.round(np.asarray(values, dtype=float)[order], 3)
         out["num_ratings"] = self.num_ratings[order]
@@ -63,7 +74,7 @@ class Recommender:
     def user_history(self, user_id, n=10):
         h = self.ratings.loc[self.ratings["userId"] == user_id].merge(self.movies, on="movieId")
         return (h.sort_values("rating", ascending=False)
-                 .head(n)[["title", "genres", "rating"]].reset_index(drop=True))
+                 .head(n)[["title", "genres", "rating", "poster_url", "overview"]].reset_index(drop=True))
 
     def recommend(self, user_id, alpha=None, n=10):
         """Hybrid top-N for a known user. alpha: 1 = pure CF, 0 = pure content."""
