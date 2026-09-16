@@ -114,6 +114,10 @@ st.markdown("""
     }
     .cm-panel-meta { color: #b3b3b3; font-size: 0.85rem; margin-bottom: 10px; }
     .cm-genre-chips { margin-bottom: 0.4rem; }
+    .cm-panel-overview {
+        color: #d0d0d0; font-size: 0.82rem; line-height: 1.4;
+        margin-bottom: 0.8rem;
+    }
     .cm-genre-chip {
         display: inline-block; background: #262626; color: #e8e8e8;
         font-size: 0.72rem; padding: 3px 10px; border-radius: 12px;
@@ -229,6 +233,20 @@ def render_card(movie, key: str, score_col: str | None = None,
     genres = movie.get("genres", "")
     genres_display = genres.replace("|", " · ") if isinstance(genres, str) else ""
 
+    poster_url = movie.get("poster_url")
+    has_poster = isinstance(poster_url, str) and poster_url.strip() != ""
+    if has_poster:
+        # Dark gradient overlay UNDER the text, ON TOP of the poster image —
+        # keeps the title readable regardless of how bright/busy the poster is.
+        background = (
+            f"linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.35) 45%, "
+            f"rgba(0,0,0,0.05) 75%), url('{poster_url}')"
+        )
+        bg_extra = "background-size: cover !important; background-position: center !important;"
+    else:
+        background = f"linear-gradient(135deg, {c1}, {c2})"
+        bg_extra = ""
+
     subtitle = genres_display
     if score_col and score_col in movie:
         pct = int(round(movie[score_col] * 100))
@@ -247,7 +265,8 @@ def render_card(movie, key: str, score_col: str | None = None,
     st.markdown(f"""
 <style>
 .st-key-{key} button {{
-    background: linear-gradient(135deg, {c1}, {c2}) !important;
+    background: {background} !important;
+    {bg_extra}
     height: {height}px !important; width: 100% !important;
     border: none !important; border-radius: {radius}px !important;
     color: white !important; text-align: left !important;
@@ -316,11 +335,22 @@ def render_panel():
     avg_rating = average_rating(rec, movie_id)
     n_ratings = int(rec.num_ratings[rec.item_pos[movie_id]]) if movie_id in rec.item_pos else 0
 
+    poster_url = row.get("poster_url")
+    has_poster = isinstance(poster_url, str) and poster_url.strip() != ""
+    if has_poster:
+        hero_bg = (
+            f"linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.3) 50%, "
+            f"rgba(0,0,0,0.05) 80%), url('{poster_url}'); "
+            f"background-size: cover; background-position: center 20%;"
+        )
+    else:
+        hero_bg = f"linear-gradient(135deg, {c1}, {c2});"
+
     with st.container(key="detail_panel"):
 
-        # ---- Section 1: colored header strip with the movie title ----
+        # ---- Section 1: header banner (real poster when we have one) ----
         st.markdown(f"""
-<div class="cm-panel-hero" style="background: linear-gradient(135deg, {c1}, {c2});">
+<div class="cm-panel-hero" style="background: {hero_bg}">
     <div class="cm-panel-hero-title">{row['title']}</div>
 </div>
 """, unsafe_allow_html=True)
@@ -337,6 +367,9 @@ def render_panel():
         if genres_list:
             chips = "".join(f'<span class="cm-genre-chip">{g}</span>' for g in genres_list)
             st.markdown(f'<div class="cm-genre-chips">{chips}</div>', unsafe_allow_html=True)
+        overview = row.get("overview")
+        if isinstance(overview, str) and overview.strip():
+            st.markdown(f'<div class="cm-panel-overview">{overview}</div>', unsafe_allow_html=True)
         st.markdown('<div class="cm-panel-divider"></div>', unsafe_allow_html=True)
 
         # ---- Section 3: similar titles + pagination ----
