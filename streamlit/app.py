@@ -130,7 +130,7 @@ st.markdown("""
         max-width: 480px; margin: 0 auto 1.4rem auto; position: relative; z-index: 10001;
     }
     .st-key-search_wrap:focus-within::before {
-        content: ""; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+        content: ""; position: fixed; inset: 0; background: rgba(0,0,0,0.12);
         z-index: -1; animation: cm-fade-in 0.2s ease;
     }
     .st-key-search_wrap input {
@@ -146,6 +146,7 @@ st.markdown("""
         outline: none !important; border-color: #E50914 !important;
     }
     .st-key-search_wrap input::placeholder { color: #888 !important; }
+    div[class*="st-key-search_results_"] { animation: cm-fade-in 0.25s ease; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -453,19 +454,33 @@ with st.container(key="search_wrap"):
         key="search_query",
     )
 
-if query and query.strip():
-    q = query.strip().lower()
-    mask = rec.movies["title"].str.lower().str.contains(q, regex=False, na=False)
-    idx = np.where(mask.to_numpy())[0]
-    if len(idx) > 0:
-        order = idx[np.argsort(-rec.num_ratings[idx])][:12]
-        results = rec.movies.iloc[order][
+# A fixed random sample, picked once per session, so suggestions don't
+# reshuffle on every rerun (every keystroke) — only when the app first loads.
+if "search_suggestions" not in st.session_state:
+    n_pick = min(12, len(rec.movies))
+    st.session_state["search_suggestions"] = np.random.choice(
+        len(rec.movies), size=n_pick, replace=False
+    ).tolist()
+
+with st.container(key=f"search_results_{query or 'default'}"):
+    if query and query.strip():
+        q = query.strip().lower()
+        mask = rec.movies["title"].str.lower().str.contains(q, regex=False, na=False)
+        idx = np.where(mask.to_numpy())[0]
+        if len(idx) > 0:
+            order = idx[np.argsort(-rec.num_ratings[idx])][:12]
+            results = rec.movies.iloc[order][
+                ["movieId", "title", "genres", "poster_url", "overview"]
+            ].reset_index(drop=True)
+            render_row(f'Results for "{query}"', results)
+        else:
+            st.markdown('<div class="cm-empty">No movies found.</div>', unsafe_allow_html=True)
+    else:
+        suggestions = rec.movies.iloc[st.session_state["search_suggestions"]][
             ["movieId", "title", "genres", "poster_url", "overview"]
         ].reset_index(drop=True)
-        render_row(f'Results for "{query}"', results)
-    else:
-        st.markdown('<div class="cm-empty">No movies found.</div>', unsafe_allow_html=True)
-    st.divider()
+        render_row("Try one of these", suggestions)
+st.divider()
 
 # ----------------------------------------------------------------------------
 # "Who's watching" — profile picker (existing user vs. new user)
